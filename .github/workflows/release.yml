@@ -1,0 +1,39 @@
+name: Release Seek (Universal macOS)
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: macos-15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build Universal Seek.app & package ZIP + DMG
+        run: |
+          chmod +x build_app.sh
+          ./build_app.sh --skip-install --package
+          file Seek.app/Contents/MacOS/Seek
+          ls -lh Seek-macOS-Universal.zip Seek-macOS-Universal.dmg
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="v1.0.0"
+          fi
+          gh release create "${TAG}" \
+            Seek-macOS-Universal.dmg \
+            Seek-macOS-Universal.zip \
+            --title "Seek ${TAG}" \
+            --notes "Universal macOS release (Apple Silicon + Intel, macOS 14.0+). No Xcode required — drag **Seek.app** into **Applications** and open it once (if macOS Gatekeeper prompts, go to System Settings → Privacy & Security → Open Anyway, or run \`xattr -cr /Applications/Seek.app && open /Applications/Seek.app\`)." \
+            || gh release upload "${TAG}" Seek-macOS-Universal.dmg Seek-macOS-Universal.zip --clobber
