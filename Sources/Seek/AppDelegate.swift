@@ -1,7 +1,7 @@
 import AppKit
 import ServiceManagement
 
-public final class AppDelegate: NSObject, NSApplicationDelegate {
+public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem?
     private let hotkeyManager = HotkeyManager()
     private var loginItemMenuItem: NSMenuItem?
@@ -15,10 +15,69 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         hotkeyManager.registerCurrentPreset()
 
+        configureLaunchAtLoginOnFirstRun()
         setupStatusBar()
         SeekSearchManager.shared.refreshIndexIfNeeded()
 
         print("[Seek] Ready: \(hotkeyManager.currentPreset.shortLabel) to toggle Seek")
+    }
+
+    /// Automatically registers Seek as a background Login Item on first launch outside a mounted DMG,
+    /// triggering macOS's native "Allow in the Background" permission flow for GitHub DMG installs.
+    private func configureLaunchAtLoginOnFirstRun() {
+        let path = Bundle.main.bundlePath
+        guard !path.hasPrefix("/Volumes/"), path.hasSuffix(".app") else { return }
+
+        let key = "SeekConfiguredLoginItemOnce"
+        guard !UserDefaults.standard.bool(forKey: key) else { return }
+        UserDefaults.standard.set(true, forKey: key)
+
+        if SMAppService.mainApp.status == .notRegistered {
+            do {
+                try SMAppService.mainApp.register()
+            } catch {
+                print("[Seek] Initial launch-at-login registration failed: \(error)")
+            }
+        }
+
+        if SMAppService.mainApp.status == .requiresApproval {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                self.promptBackgroundApprovalIfNeeded()
+            }
+        }
+    }
+
+    private func promptBackgroundApprovalIfNeeded() {
+        guard SMAppService.mainApp.status == .requiresApproval else { return }
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "Allow Seek to Run in Background"
+        alert.informativeText = "Enable Seek under System Settings → General → Login Items & Extensions so Seek starts automatically whenever you turn on your Mac."
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "Open Login Items Settings")
+        alert.addButton(withTitle: "Later")
+        if alert.runModal() == .alertFirstButtonReturn {
+            SMAppService.openSystemSettingsLoginItems()
+        }
+    }
+
+    private func refreshLoginMenuItem() {
+        guard let item = loginItemMenuItem else { return }
+        switch SMAppService.mainApp.status {
+        case .enabled:
+            item.title = "Launch at Login"
+            item.state = .on
+        case .requiresApproval:
+            item.title = "Approve Background Run in Settings…"
+            item.state = .mixed
+        default:
+            item.title = "Launch at Login"
+            item.state = .off
+        }
+    }
+
+    public func menuWillOpen(_ menu: NSMenu) {
+        refreshLoginMenuItem()
     }
 
     private func setupStatusBar() {
@@ -35,6 +94,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let menu = NSMenu()
+        menu.delegate = self
         let openItem = NSMenuItem(title: "Open Seek (\(hotkeyManager.currentPreset.shortLabel))", action: #selector(openSeek), keyEquivalent: "")
         openItem.target = self
         menu.addItem(openItem)
@@ -61,9 +121,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let loginItem = NSMenuItem(title: "Launch at Login", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
         loginItem.target = self
-        loginItem.state = (SMAppService.mainApp.status == .enabled) ? .on : .off
         menu.addItem(loginItem)
         self.loginItemMenuItem = loginItem
+        refreshLoginMenuItem()
 
         menu.addItem(NSMenuItem.separator())
         let quitItem = NSMenuItem(title: "Quit Seek", action: #selector(quitApp), keyEquivalent: "q")
@@ -95,16 +155,21 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func toggleLaunchAtLogin() {
         do {
-            if SMAppService.mainApp.status == .enabled {
+            switch SMAppService.mainApp.status {
+            case .enabled:
                 try SMAppService.mainApp.unregister()
-                loginItemMenuItem?.state = .off
-            } else {
+            case .requiresApproval:
+                SMAppService.openSystemSettingsLoginItems()
+            default:
                 try SMAppService.mainApp.register()
-                loginItemMenuItem?.state = .on
+                if SMAppService.mainApp.status == .requiresApproval {
+                    SMAppService.openSystemSettingsLoginItems()
+                }
             }
         } catch {
             SeekToast.show(title: "Launch at Login", subtitle: "Move Seek.app to /Applications first", icon: "exclamationmark.triangle")
         }
+        refreshLoginMenuItem()
     }
 
     @objc private func quitApp() {
