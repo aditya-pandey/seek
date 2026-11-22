@@ -1,4 +1,5 @@
 import Foundation
+import SQLite3
 
 public enum SeekSelfTest {
     private static var passedCount = 0
@@ -33,6 +34,7 @@ public enum SeekSelfTest {
         testQueryParser()
         testMathAndCommands()
         testFrecencyStore()
+        testBrowserBookmarksHistoryAndSiteSearch()
 
         print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         if failedCount == 0 {
@@ -143,5 +145,152 @@ public enum SeekSelfTest {
         let store = SearchFrecencyStore(customStorageURL: tempURL)
         store.recordLaunch(itemID: "/Applications/Google Chrome.app", query: "ch")
         expect(store.boost(for: "/Applications/Google Chrome.app", query: "ch") > 70.0, "Boosts launched item for query 'ch'")
+    }
+
+    private static func testBrowserBookmarksHistoryAndSiteSearch() {
+        print("▸ Testing BrowserIndexManager (Bookmarks JSON, SQLite History, Dedup, Scoring & Site Search)...")
+
+        // 1. URL filtering & canonicalization
+        expect(BrowserIndexManager.isNoisyURL("chrome://settings"), "Rejects chrome:// URLs")
+        expect(BrowserIndexManager.isNoisyURL("https://accounts.google.com/ServiceLogin?foo=1"), "Rejects OAuth login URLs")
+        expect(!BrowserIndexManager.isNoisyURL("https://mail.google.com/mail/u/0/"), "Allows Gmail URL")
+
+        let dirty = URL(string: "https://www.github.com/aditya-pandey/seek/?utm_source=twitter&fbclid=xyz")!
+        expect(BrowserIndexManager.canonicalizeURL(dirty) == "https://github.com/aditya-pandey/seek", "Canonicalizes www, trailing slash & tracking params")
+
+        // 2. Chromium Bookmarks JSON parsing
+        let bmJSON = """
+        {
+          "roots": {
+            "bookmark_bar": {
+              "name": "Bookmarks Bar",
+              "type": "folder",
+              "children": [
+                {
+                  "name": "Work",
+                  "type": "folder",
+                  "children": [
+                    { "name": "Gmail", "type": "url", "url": "https://mail.google.com/mail/u/0/", "date_added": "13350000000000000" },
+                    { "name": "Chrome Flags", "type": "url", "url": "chrome://flags" }
+                  ]
+                }
+              ]
+            }
+          }
+        }
+        """.data(using: .utf8)!
+        let parsedBM = BrowserIndexManager.parseChromiumBookmarksData(
+            bmJSON,
+            source: .chrome,
+            profileDirectory: "Default",
+            profileDisplayName: "Personal",
+            hasMultipleProfiles: true
+        )
+        expect(parsedBM.count == 1, "Parses valid bookmark and skips chrome://flags")
+        expect(parsedBM.first?.title == "Gmail" && parsedBM.first?.folderPath == "Work", "Preserves title and folder breadcrumb")
+
+        // 2b. Chromium Local State profile display names
+        let localStateJSON = """
+        {
+          "profile": {
+            "info_cache": {
+              "Default": { "name": "Person 1", "gaia_given_name": "Personal" },
+              "Profile 1": { "name": "Work" }
+            }
+          }
+        }
+        """.data(using: .utf8)!
+        let profileMap = BrowserIndexManager.parseChromiumLocalState(localStateJSON)
+        expect(profileMap["Default"] == "Personal" && profileMap["Profile 1"] == "Work", "Extracts human profile names from Chromium Local State")
+
+        // 3. Chromium History SQLite safe read-only copy parsing
+        let tempChromeDB = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("seek_test_chrome_\(UUID().uuidString).sqlite")
+        defer { try? FileManager.default.removeItem(at: tempChromeDB) }
+        var db: OpaquePointer?
+        if sqlite3_open(tempChromeDB.path, &db) == SQLITE_OK, let h = db {
+            let setup = """
+            CREATE TABLE urls (id INTEGER PRIMARY KEY, url TEXT, title TEXT, visit_count INTEGER, typed_count INTEGER, last_visit_time INTEGER, hidden INTEGER);
+            INSERT INTO urls VALUES (1, 'https://mail.google.com/mail/u/0/', 'Gmail - Inbox', 120, 15, 13375000000000000, 0);
+            INSERT INTO urls VALUES (2, 'https://github.com/aditya-pandey/seek', 'aditya-pandey/seek', 42, 6, 13375000000000000, 0);
+            INSERT INTO urls VALUES (3, 'https://example.com/one-visit', 'Single Visit', 1, 0, 13375000000000000, 0);
+            """
+            sqlite3_exec(h, setup, nil, nil, nil)
+            sqlite3_close(h)
+        }
+        let chromeHist = BrowserIndexManager.parseChromiumHistorySQLite(
+            at: tempChromeDB,
+            source: .chrome,
+            profileDirectory: "Default",
+            profileDisplayName: "Personal",
+            hasMultipleProfiles: true
+        )
+        expect(chromeHist.count == 2, "Reads visit_count >= 2 entries safely from Chromium SQLite")
+        expect(chromeHist.first?.domain == "mail.google.com", "Orders top visited Gmail entry first")
+
+        // Multi-profile preservation: Profile 1 (Work) Gmail stays separate from Default (Personal) Gmail!
+        let workGmail = BrowserSiteItem(
+            url: URL(string: "https://mail.google.com/mail/u/0/")!,
+            title: "Gmail",
+            isBookmark: true,
+            visitCount: 250,
+            lastVisited: Date(),
+            source: .chrome,
+            profileDirectory: "Profile 1",
+            profileDisplayName: "Work",
+            hasMultipleProfiles: true
+        )
+        let multiMerged = BrowserIndexManager.deduplicateAndMerge(parsedBM + chromeHist + [workGmail])
+        let gmailProfiles = multiMerged.filter { $0.domain == "mail.google.com" }
+        expect(gmailProfiles.count == 2, "Keeps Work and Personal Chrome Gmail profiles distinct")
+        expect((SeekSearchManager.scoreWebSite(workGmail, tokens: ["gmail", "work"]) ?? 0) > 250.0, "'gmail work' matches Work Chrome profile")
+
+        // 4. Firefox places.sqlite safe read-only copy parsing
+        let tempFFDB = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("seek_test_ff_\(UUID().uuidString).sqlite")
+        defer { try? FileManager.default.removeItem(at: tempFFDB) }
+        var ffdb: OpaquePointer?
+        if sqlite3_open(tempFFDB.path, &ffdb) == SQLITE_OK, let h = ffdb {
+            let setup = """
+            CREATE TABLE moz_places (id INTEGER PRIMARY KEY, url TEXT, title TEXT, visit_count INTEGER, hidden INTEGER, frecency INTEGER, last_visit_date INTEGER);
+            CREATE TABLE moz_bookmarks (id INTEGER PRIMARY KEY, type INTEGER, fk INTEGER, title TEXT);
+            INSERT INTO moz_places VALUES (1, 'https://figma.com', 'Figma', 35, 0, 4200, 1730000000000000);
+            INSERT INTO moz_bookmarks VALUES (10, 1, 1, 'Figma Design');
+            """
+            sqlite3_exec(h, setup, nil, nil, nil)
+            sqlite3_close(h)
+        }
+        let ffItems = BrowserIndexManager.parseFirefoxPlacesSQLite(at: tempFFDB)
+        expect(ffItems.count == 1 && ffItems.first?.isBookmark == true && ffItems.first?.title == "Figma Design", "Reads Firefox places.sqlite bookmarks & visits")
+
+        // 5. Deduplication merges bookmark + history visit count
+        let merged = BrowserIndexManager.deduplicateAndMerge(parsedBM + chromeHist)
+        let gmailMerged = merged.first(where: { $0.domain == "mail.google.com" })
+        expect(gmailMerged?.isBookmark == true && (gmailMerged?.visitCount ?? 0) == 120, "Deduplication merges bookmark flag and visit count")
+
+        // 6. Scoring calibration: root Gmail bookmark beats deep random history thread; typo 'gamil' still matches!
+        let now = Date()
+        let deepThread = BrowserSiteItem(
+            url: URL(string: "https://mail.google.com/mail/u/0/#inbox/FMfcgzQXKLongThreadId999?view=pt")!,
+            title: "Re: random thread gmail",
+            isBookmark: false,
+            visitCount: 2,
+            lastVisited: now.addingTimeInterval(-30 * 86_400),
+            source: .chrome
+        )
+        let gmailRootScore = SeekSearchManager.scoreWebSite(gmailMerged!, tokens: ["gmail"], now: now) ?? 0
+        let threadScore = SeekSearchManager.scoreWebSite(deepThread, tokens: ["gmail"], now: now) ?? 0
+        expect(gmailRootScore > threadScore, "Root Gmail bookmark outranks deep thread URL")
+        expect((SeekSearchManager.scoreWebSite(gmailMerged!, tokens: ["gamil"], now: now) ?? 0) > 100.0, "Typo 'gamil' matches Gmail bookmark")
+
+        // 7. QuickSiteSearchEngine & ParsedSearchQuery web scopes
+        let gmailSearch = QuickSiteSearchEngine.match(rawQuery: "gmail invoice")
+        expect(gmailSearch?.targetURL.absoluteString == "https://mail.google.com/mail/u/0/#search/invoice", "'gmail invoice' generates Gmail search URL")
+        expect(QuickSiteSearchEngine.match(rawQuery: "gmail") == nil, "Plain 'gmail' does not trigger in-site search so bookmark wins")
+        let ytSearch = QuickSiteSearchEngine.match(rawQuery: "yt swiftui")
+        expect(ytSearch?.siteName == "YouTube" && ytSearch?.targetURL.absoluteString.contains("search_query=swiftui") == true, "'yt swiftui' generates YouTube search URL")
+
+        let parsedWeb = ParsedSearchQuery.parse("in:bookmarks figma")
+        expect(parsedWeb.webScope == .bookmarksOnly && parsedWeb.searchTokens == ["figma"], "Parses in:bookmarks scope cleanly")
+        let parsedWebAll = ParsedSearchQuery.parse("in:web gmail")
+        expect(parsedWebAll.webScope == .allWeb && parsedWebAll.searchTokens == ["gmail"], "Parses in:web scope cleanly")
     }
 }

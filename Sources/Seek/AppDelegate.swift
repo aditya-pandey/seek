@@ -18,6 +18,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
         configureLaunchAtLoginOnFirstRun()
         setupStatusBar()
         SeekSearchManager.shared.refreshIndexIfNeeded()
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.30) {
+            BrowserIndexManager.shared.refreshIfNeeded()
+        }
 
         print("[Seek] Ready: \(hotkeyManager.currentPreset.shortLabel) to toggle Seek")
     }
@@ -83,8 +86,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
     private func setupStatusBar() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem?.button {
-            if let customURL = Bundle.main.url(forResource: "MenuBarTemplate", withExtension: "png"),
-               let customImg = NSImage(contentsOf: customURL) {
+            if let customImg = Bundle.main.image(forResource: NSImage.Name("MenuBarTemplate")) {
                 customImg.size = NSSize(width: 18, height: 18)
                 customImg.isTemplate = true
                 button.image = customImg
@@ -139,7 +141,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate 
 
     @objc private func refreshIndex() {
         SeekSearchManager.shared.refreshIndexIfNeeded(force: true)
-        SeekToast.show(title: "Refreshing Index", subtitle: "Scanning apps, folders & iCloud Drive", icon: "arrow.triangle.2.circlepath")
+        BrowserIndexManager.shared.refreshIfNeeded(force: true)
+        SeekToast.show(title: "Refreshing Index", subtitle: "Scanning files, bookmarks & top sites", icon: "arrow.triangle.2.circlepath")
     }
 
     @objc private func selectHotkeyPreset(_ sender: NSMenuItem) {

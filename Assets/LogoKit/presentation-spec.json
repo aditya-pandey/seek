@@ -1,0 +1,45 @@
+{
+  "brand": "Seek",
+  "tagline": "Zero-lag macOS file, app, bookmark & command launcher",
+  "brief": "Native macOS frosted-vibrancy search launcher (\u2325 F) across local files, iCloud Drive, Spotlight content, and multi-profile browser bookmarks & top sites. Sister product to Glance (Focal Frame).",
+  "adjectives": [
+    "Instant",
+    "Architectural",
+    "Sharp",
+    "Focused",
+    "Native"
+  ],
+  "criteria": "Avoid magnifying-glass clich\u00e9s; stay razor-sharp at 16 px monochrome in the macOS Menu Bar; pair naturally with Glance in Applications.",
+  "industry": "dev-tool",
+  "nav": [
+    "Features",
+    "Shortcuts",
+    "Releases"
+  ],
+  "brand_color": "#4B83DB",
+  "greyscale": false,
+  "designer": "Seek Identity Studio",
+  "round": 2,
+  "concepts": [
+    {
+      "name": "Aperture Lock",
+      "symbol": "/Users/macbook/Documents/weapon_wheel/seek/Assets/LogoKit/seek-symbol-color.svg",
+      "symbol_on_tile": "/Users/macbook/Documents/weapon_wheel/seek/Assets/LogoKit/seek-symbol-on-dark.svg",
+      "lockup": "/Users/macbook/Documents/weapon_wheel/seek/Assets/LogoKit/seek-horizontal-color.svg",
+      "lockup_on_dark": "/Users/macbook/Documents/weapon_wheel/seek/Assets/LogoKit/seek-horizontal-on-dark.svg",
+      "tile_color": "#0E1117",
+      "idea": "Two opposing 45\u00b0-chamfered architectural viewfinder brackets locking onto a floating Steel Sapphire focal diamond.",
+      "rationale": [
+        "Direct architectural sibling to Glance's Focal Frame without repeating its silhouette",
+        "Drops the magnifying-glass clich\u00e9 while immediately communicating pinpoint focus",
+        "Three solid shapes with 30+ unit moats survive 16 px Menu Bar rendering effortlessly"
+      ]
+    }
+  ],
+  "recommendation": "Aperture Lock \u2014 distinctive, architectural, 100/100 vector-clean, and built to sit directly beside Glance in macOS.",
+  "next_steps": [
+    "Bundled into Seek.app (AppIcon.icns + MenuBarTemplate@2x.png)",
+    "Exported one-colour, reversed, and favicon variants",
+    "Ready to ship in Seek v1.1.0 Universal DMG"
+  ]
+}

@@ -12,6 +12,7 @@ public enum SearchFilterCategory: String, CaseIterable, Identifiable {
     case foldersAndRepos = "Folders"
     case imagesAndMedia  = "Media"
     case code            = "Code"
+    case web             = "Web"
 
     public var id: String { rawValue }
 
@@ -23,6 +24,7 @@ public enum SearchFilterCategory: String, CaseIterable, Identifiable {
         case .foldersAndRepos: return "folder.fill.badge.gearshape"
         case .imagesAndMedia:  return "photo.on.rectangle.angled"
         case .code:            return "chevron.left.forwardslash.chevron.right"
+        case .web:             return "globe"
         }
     }
 }
@@ -208,6 +210,8 @@ public enum UnifiedSearchResultKind: Equatable {
     case command(QuickCommandResult)
     case openWindow(OpenWindowEntry)
     case file(IndexedFileItem)
+    case webSite(BrowserSiteItem)
+    case siteSearch(SiteSearchAction)
 }
 
 public struct UnifiedSearchResult: Identifiable, Equatable {
@@ -225,6 +229,16 @@ public struct UnifiedSearchResult: Identifiable, Equatable {
 
     public var fileItem: IndexedFileItem? {
         if case .file(let item) = kind { return item }
+        return nil
+    }
+
+    public var webSiteItem: BrowserSiteItem? {
+        if case .webSite(let site) = kind { return site }
+        return nil
+    }
+
+    public var siteSearchAction: SiteSearchAction? {
+        if case .siteSearch(let action) = kind { return action }
         return nil
     }
 }
@@ -249,12 +263,19 @@ public struct SearchSnapshot: Equatable {
 // MARK: - Natural Query Parser (Paths, Scopes, Extensions, Content)
 // ─────────────────────────────────────────────────────────────────────────
 
+public enum WebScopeFilter: Equatable {
+    case allWeb
+    case bookmarksOnly
+    case historyOnly
+}
+
 public struct ParsedSearchQuery {
     public let raw: String
     public let trimmed: String
     public let isPathMode: Bool
     public let scopeDirectory: URL?
     public let scopeLabel: String?
+    public let webScope: WebScopeFilter?
     public let forceContentSearch: Bool
     public let forcedExtensions: Set<String>
     public let searchTokens: [String]
@@ -293,6 +314,7 @@ public struct ParsedSearchQuery {
                 isPathMode: true,
                 scopeDirectory: nil,
                 scopeLabel: "Path Browser",
+                webScope: nil,
                 forceContentSearch: false,
                 forcedExtensions: [],
                 searchTokens: [],
@@ -305,6 +327,7 @@ public struct ParsedSearchQuery {
 
         var scopeDir: URL?
         var scopeLabel: String?
+        var webScope: WebScopeFilter?
         var forceContent = false
         var forcedExts: Set<String> = []
         var tokens: [String] = []
@@ -331,6 +354,15 @@ public struct ParsedSearchQuery {
                 case "apps", "applications":
                     scopeDir = URL(fileURLWithPath: "/Applications")
                     scopeLabel = "Applications"
+                case "web", "browser", "sites":
+                    webScope = .allWeb
+                    scopeLabel = "Web & Bookmarks"
+                case "bookmarks", "bookmark", "bm":
+                    webScope = .bookmarksOnly
+                    scopeLabel = "Bookmarks"
+                case "history", "top":
+                    webScope = .historyOnly
+                    scopeLabel = "Top Sites"
                 default:
                     if !target.isEmpty { tokens.append(target) }
                 }
@@ -356,7 +388,7 @@ public struct ParsedSearchQuery {
         }
 
         var highlightTokens = tokens
-        if tokens.count >= 2 {
+        if tokens.count >= 2 && webScope == nil {
             var remaining: [String] = []
             var extractedExts: Set<String> = []
             for tok in tokens {
@@ -371,7 +403,7 @@ public struct ParsedSearchQuery {
                 tokens = remaining
                 highlightTokens = remaining
             }
-        } else if tokens.count == 1, let tok = tokens.first,
+        } else if tokens.count == 1 && webScope == nil, let tok = tokens.first,
                   let exts = typeAliases[tok],
                   ["pdf", "xlsx", "pptx", "docx", "csv", "png", "jpg", "excel", "slides", "video", "audio"].contains(tok) {
             forcedExts.formUnion(exts)
@@ -383,6 +415,7 @@ public struct ParsedSearchQuery {
             isPathMode: false,
             scopeDirectory: scopeDir,
             scopeLabel: scopeLabel,
+            webScope: webScope,
             forceContentSearch: forceContent,
             forcedExtensions: forcedExts,
             searchTokens: tokens,
@@ -933,8 +966,34 @@ public final class SeekSearchManager: NSObject, ObservableObject, QLPreviewPanel
         let openWinSnapshot = cachedOpenWindows
         let prevBundle = previousApp?.bundleIdentifier
         stateLock.unlock()
+        let webSnapshot = BrowserIndexManager.shared.currentSnapshot()
+        let isWebOnlyMode = (category == .web) || (parsed.webScope != nil)
 
         if parsed.trimmed.isEmpty {
+            if isWebOnlyMode {
+                let webIdle = webSnapshot.map { site -> (BrowserSiteItem, Double) in
+                    let base = Self.idleWebScore(for: site, now: now)
+                    let frec = SearchFrecencyStore.shared.boost(for: "web_\(site.id)", query: "", now: now)
+                    return (site, base + frec)
+                }
+                let topWeb = webIdle
+                    .sorted { $0.1 > $1.1 }
+                    .prefix(40)
+                    .map { UnifiedSearchResult(id: "web_\($0.0.id)", kind: .webSite($0.0), score: $0.1) }
+
+                publishSnapshot(
+                    SearchSnapshot(
+                        query: rawQuery,
+                        category: category,
+                        items: topWeb,
+                        isSearchingDeep: false,
+                        statusHint: "Bookmarks & Top Sites"
+                    ),
+                    generation: generation
+                )
+                return
+            }
+
             let filtered = indexSnapshot.filter { Self.matchesCategory(item: $0, category: category) }
             let scoredIdle = filtered.map { item -> (IndexedFileItem, Double) in
                 let base = Self.idleScore(for: item, now: now)
@@ -962,14 +1021,63 @@ public final class SeekSearchManager: NSObject, ObservableObject, QLPreviewPanel
         var unifiedResults: [UnifiedSearchResult] = []
         unifiedResults.reserveCapacity(64)
 
-        if parsed.scopeDirectory == nil && !parsed.forceContentSearch,
+        if parsed.scopeDirectory == nil && !parsed.forceContentSearch && !isWebOnlyMode,
            let inlineHit = CommandEngine.evaluateInline(query: rawQuery) {
             unifiedResults.append(
                 UnifiedSearchResult(id: "inline_\(inlineHit.id)", kind: .inlineCommand(inlineHit), score: 10_000.0)
             )
         }
 
-        if category == .all && parsed.scopeDirectory == nil && !parsed.forceContentSearch {
+        // Direct in-site search ("gmail invoice", "drive budget", "gh seek", "yt lofi", "g swift")
+        if (category == .all || isWebOnlyMode) && parsed.scopeDirectory == nil && !parsed.forceContentSearch,
+           let siteSearch = QuickSiteSearchEngine.match(rawQuery: rawQuery) {
+            unifiedResults.append(
+                UnifiedSearchResult(
+                    id: siteSearch.id,
+                    kind: .siteSearch(siteSearch),
+                    score: 360.0
+                )
+            )
+        }
+
+        // Browser Bookmarks & Top Visited Websites
+        if (category == .all || isWebOnlyMode) && parsed.scopeDirectory == nil && !parsed.forceContentSearch && parsed.forcedExtensions.isEmpty {
+            let webFilter = parsed.webScope ?? .allWeb
+            var webHits: [(BrowserSiteItem, Double)] = []
+            webHits.reserveCapacity(32)
+
+            for site in webSnapshot {
+                if webFilter == .bookmarksOnly && !site.isBookmark { continue }
+                if webFilter == .historyOnly && site.visitCount < 2 { continue }
+
+                let s: Double?
+                if parsed.searchTokens.isEmpty {
+                    s = Self.idleWebScore(for: site, now: now) + 120.0
+                } else {
+                    let frec = SearchFrecencyStore.shared.boost(for: "web_\(site.id)", query: parsed.trimmed, now: now)
+                    s = Self.scoreWebSite(site, tokens: parsed.searchTokens, now: now, frecencyBoost: frec)
+                }
+
+                if let score = s {
+                    webHits.append((site, score))
+                }
+            }
+
+            let webLimit = isWebOnlyMode ? 45 : 8
+            for (site, score) in webHits.sorted(by: { $0.1 > $1.1 }).prefix(webLimit) {
+                let ranges = Self.matchRanges(in: site.title, tokens: parsed.allHighlightTokens)
+                unifiedResults.append(
+                    UnifiedSearchResult(
+                        id: "web_\(site.id)",
+                        kind: .webSite(site),
+                        score: score,
+                        matchedRanges: ranges
+                    )
+                )
+            }
+        }
+
+        if category == .all && !isWebOnlyMode && parsed.scopeDirectory == nil && !parsed.forceContentSearch {
             let cmdHits = CommandEngine.scoredCommands(query: rawQuery, frontAppBundleID: prevBundle).prefix(3)
             for hit in cmdHits {
                 let ranges = Self.matchRanges(in: hit.command.title, tokens: parsed.allHighlightTokens)
@@ -984,7 +1092,7 @@ public final class SeekSearchManager: NSObject, ObservableObject, QLPreviewPanel
             }
         }
 
-        if (category == .all || category == .apps) && parsed.scopeDirectory == nil && !parsed.forceContentSearch && !parsed.searchTokens.isEmpty {
+        if (category == .all || category == .apps) && !isWebOnlyMode && parsed.scopeDirectory == nil && !parsed.forceContentSearch && !parsed.searchTokens.isEmpty {
             var winHits: [(OpenWindowEntry, Double)] = []
             for entry in openWinSnapshot {
                 let appLower = entry.appName.lowercased()
@@ -1014,7 +1122,7 @@ public final class SeekSearchManager: NSObject, ObservableObject, QLPreviewPanel
         fileMap.reserveCapacity(80)
         let scopePathPrefix = parsed.scopeDirectory?.path
 
-        if !parsed.forceContentSearch {
+        if !parsed.forceContentSearch && !isWebOnlyMode {
             for item in indexSnapshot {
                 if let prefix = scopePathPrefix, !item.id.hasPrefix(prefix) { continue }
                 guard Self.matchesCategory(item: item, category: category) else { continue }
@@ -1049,7 +1157,8 @@ public final class SeekSearchManager: NSObject, ObservableObject, QLPreviewPanel
             limit: 45
         )
 
-        let shouldRunDeepSpotlight = (parsed.trimmed.count >= 2 || !parsed.forcedExtensions.isEmpty || parsed.forceContentSearch)
+        let shouldRunDeepSpotlight = !isWebOnlyMode
+            && (parsed.trimmed.count >= 2 || !parsed.forcedExtensions.isEmpty || parsed.forceContentSearch)
             && category != .apps
 
         var hint: String? = parsed.scopeLabel.map { "Scope: \($0)" }
@@ -1740,7 +1849,115 @@ public final class SeekSearchManager: NSObject, ObservableObject, QLPreviewPanel
         case .foldersAndRepos: return item.isDirectory
         case .imagesAndMedia:  return !item.isDirectory && !item.isApplication && mediaExtensions.contains(item.ext)
         case .code:            return (!item.isDirectory && !item.isApplication && codeExtensions.contains(item.ext)) || item.isProjectRepo
+        case .web:             return false
         }
+    }
+
+    private static func idleWebScore(for site: BrowserSiteItem, now: Date = Date()) -> Double {
+        var score: Double = 0.0
+        if site.isBookmark { score += 90.0 }
+        if site.isRootApp { score += 55.0 }
+        if site.visitCount > 0 { score += min(80.0, log2(Double(site.visitCount) + 1.0) * 16.0) }
+        if site.typedCount > 0 { score += min(35.0, Double(site.typedCount) * 4.0) }
+        if site.lastVisited != .distantPast {
+            score += recencyBoost(for: site.lastVisited, now: now)
+        }
+        return score
+    }
+
+    /// Calibrated web scorer: exact bookmarks & root web apps (`gmail`, `github`, `figma`) surface near the top,
+    /// while deep/low-visit history pages remain ranked below exact local files & apps in All mode.
+    public static func scoreWebSite(
+        _ site: BrowserSiteItem,
+        tokens: [String],
+        now: Date = Date(),
+        frecencyBoost: Double = 0.0
+    ) -> Double? {
+        guard !tokens.isEmpty else { return nil }
+        var totalScore: Double = 0.0
+
+        // Primary domain stem (e.g. "mail.google.com" -> "google", "github.com" -> "github")
+        let domainParts = site.domainLower.split(separator: ".").map(String.init)
+        let primaryHostWord = domainParts.first ?? site.domainLower
+
+        for token in tokens {
+            let compactToken = IndexedFileItem.normalizeCompact(token)
+
+            // 1. Exact title or exact domain match (e.g. "gmail", "github", "figma")
+            if site.titleLower == token || site.domainLower == token || primaryHostWord == token || (!compactToken.isEmpty && site.titleNormalized == compactToken) {
+                totalScore += 195.0
+                continue
+            }
+
+            // 2. Title or domain prefix match (e.g. "gma" -> "Gmail", "git" -> "github.com")
+            if site.titleLower.hasPrefix(token) || site.domainLower.hasPrefix(token) || primaryHostWord.hasPrefix(token) {
+                totalScore += 150.0
+                continue
+            }
+
+            // 3. Initials match on title
+            if token.count >= 2 && (site.initialsLower == token || site.initialsLower.hasPrefix(token)) {
+                totalScore += 135.0
+                continue
+            }
+
+            // 4. Word-start match inside title or domain
+            if let wordBonus = bestWordPrefixBonus(token: token, words: site.wordTokensLower) {
+                totalScore += 120.0 + wordBonus
+                continue
+            }
+
+            // 5. Substring match in title or domain
+            if site.titleLower.contains(token) || site.domainLower.contains(token) {
+                totalScore += 90.0
+                continue
+            }
+
+            // 6. Bookmark folder, Chrome profile name, or URL path match
+            if !site.profileDisplayNameLower.isEmpty && site.profileDisplayNameLower.contains(token) {
+                totalScore += 88.0
+                continue
+            }
+            if !site.folderPathLower.isEmpty && site.folderPathLower.contains(token) {
+                totalScore += 76.0
+                continue
+            }
+            if site.urlLower.contains(token) {
+                totalScore += 60.0
+                continue
+            }
+
+            // 7. Typo tolerance on title/domain words (e.g. "gamil" -> "gmail", "gihub" -> "github")
+            if token.count >= 4 && matchesWithTypoTolerance(token, words: site.wordTokensLower, compactName: site.titleNormalized) {
+                totalScore += 68.0
+                continue
+            }
+
+            return nil
+        }
+
+        // ── Calibrated Web Quality & Frecency Boosts ──
+        if site.isBookmark {
+            totalScore += 48.0
+        }
+        if site.isRootApp {
+            totalScore += 28.0
+        } else if site.url.path.count > 30 || site.url.query != nil {
+            // Gently penalize deep specific pages so root web apps & local exact files win cleanly
+            totalScore -= 24.0
+        }
+
+        if site.visitCount > 0 {
+            totalScore += min(55.0, log2(Double(site.visitCount) + 1.0) * 12.0)
+        }
+        if site.typedCount > 0 {
+            totalScore += min(25.0, Double(site.typedCount) * 3.5)
+        }
+        if site.lastVisited != .distantPast {
+            totalScore += recencyBoost(for: site.lastVisited, now: now) * 0.75
+        }
+        totalScore += frecencyBoost
+        return totalScore
     }
 
     private static func idleScore(for item: IndexedFileItem, now: Date = Date()) -> Double {
@@ -2014,6 +2231,110 @@ public final class SeekSearchManager: NSObject, ObservableObject, QLPreviewPanel
         OpenWindowLookup.focusWindow(entry)
     }
 
+    public func openWebSite(_ site: BrowserSiteItem, preferDefaultBrowser: Bool = false) {
+        stateLock.lock()
+        let q = currentQuery
+        lastLaunchedItem = true
+        stateLock.unlock()
+
+        SearchFrecencyStore.shared.recordLaunch(itemID: "web_\(site.id)", query: q)
+        hide(restorePreviousApp: false)
+
+        openURLInBrowser(
+            site.url,
+            source: site.source,
+            profileDirectory: site.profileDirectory,
+            preferDefaultBrowser: preferDefaultBrowser
+        )
+    }
+
+    public func copyWebURL(_ site: BrowserSiteItem) {
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(site.url.absoluteString, forType: .string)
+        NSSound(named: "Glass")?.play()
+        SeekToast.show(title: "URL Copied", subtitle: site.domain.isEmpty ? site.url.absoluteString : site.domain, icon: "link")
+    }
+
+    public func openSiteSearch(_ action: SiteSearchAction) {
+        stateLock.lock()
+        lastLaunchedItem = true
+        stateLock.unlock()
+
+        hide(restorePreviousApp: false)
+
+        // Route `gmail <query>`, `drive <query>`, etc. into the exact browser & existing profile
+        // where the user actually uses that site!
+        if let preferred = BrowserIndexManager.shared.preferredBrowserAndProfile(forDomain: action.domain) {
+            openURLInBrowser(
+                action.targetURL,
+                source: preferred.source,
+                profileDirectory: preferred.profileDirectory,
+                preferDefaultBrowser: false
+            )
+        } else {
+            NSWorkspace.shared.open(action.targetURL)
+        }
+    }
+
+    /// Opens a URL directly inside an existing Chromium profile window (as a new tab) using
+    /// Chromium's ProcessSingleton IPC when running, guaranteeing we NEVER spawn a new profile
+    /// or open the wrong Chrome profile window.
+    private func openURLInBrowser(
+        _ url: URL,
+        source: BrowserSource,
+        profileDirectory: String?,
+        preferDefaultBrowser: Bool
+    ) {
+        if preferDefaultBrowser {
+            NSWorkspace.shared.open(url)
+            return
+        }
+
+        guard let browserURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: source.bundleIdentifier) else {
+            NSWorkspace.shared.open(url)
+            return
+        }
+
+        // For Chrome / Brave / Edge / Vivaldi with a verified existing profile folder on disk:
+        if source.supportsChromiumProfileFlag,
+           let profileDir = profileDirectory,
+           BrowserIndexManager.chromiumProfileExists(source: source, profileDirectory: profileDir) {
+            let running = NSRunningApplication.runningApplications(withBundleIdentifier: source.bundleIdentifier).first
+
+            if let runningApp = running,
+               let execURL = Bundle(url: browserURL)?.executableURL {
+                DispatchQueue.global(qos: .userInitiated).async {
+                    let proc = Process()
+                    proc.executableURL = execURL
+                    proc.arguments = ["--profile-directory=\(profileDir)", url.absoluteString]
+                    proc.standardOutput = FileHandle.nullDevice
+                    proc.standardError = FileHandle.nullDevice
+                    try? proc.run()
+                    DispatchQueue.main.async {
+                        runningApp.activate()
+                    }
+                }
+                return
+            } else {
+                // Browser isn't running yet -> launch cleanly via LaunchServices into that exact profile
+                DispatchQueue.global(qos: .userInitiated).async {
+                    let proc = Process()
+                    proc.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+                    proc.arguments = ["-a", browserURL.path, "--args", "--profile-directory=\(profileDir)", url.absoluteString]
+                    proc.standardOutput = FileHandle.nullDevice
+                    proc.standardError = FileHandle.nullDevice
+                    try? proc.run()
+                }
+                return
+            }
+        }
+
+        let config = NSWorkspace.OpenConfiguration()
+        config.activates = true
+        NSWorkspace.shared.open([url], withApplicationAt: browserURL, configuration: config, completionHandler: nil)
+    }
+
     public func revealInFinder(_ item: IndexedFileItem) {
         stateLock.lock()
         let q = currentQuery
@@ -2113,6 +2434,7 @@ public final class SeekSearchManager: NSObject, ObservableObject, QLPreviewPanel
             self.stateLock.unlock()
 
             self.refreshIndexIfNeeded()
+            BrowserIndexManager.shared.refreshIfNeeded()
 
             let frontRef = self.previousApp
             DispatchQueue.global(qos: .userInteractive).async { [weak self] in

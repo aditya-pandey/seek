@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 360" width="360" height="360" role="img" aria-labelledby="title">
+  <title id="title">Seek Stacked Logo</title>
+  <g id="symbol" transform="translate(75, 20) scale(0.82)">
+    <path fill="#12151C" d="M 48 24 H 160 L 128 56 H 64 A 8 8 0 0 0 56 64 V 128 L 24 160 V 48 A 24 24 0 0 1 48 24 Z"/>
+    <path fill="#12151C" d="M 208 232 H 96 L 128 200 H 192 A 8 8 0 0 0 200 192 V 128 L 232 96 V 208 A 24 24 0 0 1 208 232 Z"/>
+    <path fill="#4B83DB" d="M 128 86 L 170 128 L 128 170 L 86 128 Z"/>
+  </g>
+  <g transform="translate(46, 250) scale(0.74)">
+  <g id="wordmark" fill="#12151C">
+    <path d="M 16 0 H 68 V 18 H 22 A 4 4 0 0 0 18 22 V 39 A 4 4 0 0 0 22 43 H 56 A 16 16 0 0 1 72 59 V 88 A 16 16 0 0 1 56 104 H 4 V 86 H 50 A 4 4 0 0 0 54 82 V 65 A 4 4 0 0 0 50 61 H 16 A 16 16 0 0 1 0 45 V 16 A 16 16 0 0 1 16 0 Z"/>
+    <path d="M 96 0 H 160 V 18 H 116 V 43 H 152 V 61 H 116 V 86 H 160 V 104 H 96 Z"/>
+    <path d="M 184 0 H 248 V 18 H 204 V 43 H 240 V 61 H 204 V 86 H 248 V 104 H 184 Z"/>
+    <path d="M 272 0 H 292 V 44 L 336 0 H 360 L 314 46 L 362 104 H 336 L 300 60 L 292 68 V 104 H 272 Z"/>
+  </g>
+  </g>
+</svg>

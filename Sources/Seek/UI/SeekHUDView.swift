@@ -166,7 +166,10 @@ public struct SeekHUDView: View {
                         onQuickLook: { manager.toggleQuickLook(for: $0) },
                         onCopyFile: { manager.copyFileToClipboard($0) },
                         onRunCommand: { manager.executeCommand($0) },
-                        onFocusWindow: { manager.focusOpenWindow($0) }
+                        onFocusWindow: { manager.focusOpenWindow($0) },
+                        onOpenWeb: { site, preferDefault in manager.openWebSite(site, preferDefaultBrowser: preferDefault) },
+                        onCopyWebURL: { manager.copyWebURL($0) },
+                        onOpenSiteSearch: { manager.openSiteSearch($0) }
                     )
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
@@ -251,7 +254,7 @@ public struct SeekHUDView: View {
 
             InstantSearchTextField(
                 text: $searchText,
-                placeholder: "Seek files, apps, content:word, in:downloads, ~/path, or 18% of 2400...",
+                placeholder: "Seek files, apps, bookmarks, gmail <query>, in:downloads, or 18% of 2400...",
                 manager: manager,
                 onTextChange: { newValue in
                     selectedIndex = 0
@@ -334,6 +337,7 @@ public struct SeekHUDView: View {
             .clipShape(Capsule())
             .onTapGesture {
                 manager.refreshIndexIfNeeded(force: true)
+                BrowserIndexManager.shared.refreshIfNeeded(force: true)
             }
             .help("Click to refresh local index (Spotlight also searches all of ~ & iCloud Drive live)")
         }
@@ -348,10 +352,13 @@ public struct SeekHUDView: View {
             quickPill(icon: "clock.arrow.circlepath", label: "Recent", hint: "↓") {
                 expandWithRecents()
             }
+            quickPill(icon: "globe", label: "Web", hint: "⌘7") {
+                selectCategoryAndExpand(.web)
+            }
             quickPill(icon: "square.grid.2x2.fill", label: "Apps", hint: "⌘2") {
                 selectCategoryAndExpand(.apps)
             }
-            quickPill(icon: "doc.richtext.fill", label: "Docs & PDF", hint: "⌘3") {
+            quickPill(icon: "doc.richtext.fill", label: "Docs", hint: "⌘3") {
                 selectCategoryAndExpand(.docsAndPDFs)
             }
             quickPill(icon: "arrow.down.circle.fill", label: "Downloads", hint: nil) {
@@ -517,7 +524,7 @@ public struct SeekHUDView: View {
             shortcutHint(key: "⌘O", label: "Editor")
             shortcutHint(key: "⌘Y", label: "QuickLook")
             Spacer()
-            Text("in:downloads · .pdf · content:word · ~/")
+            Text("in:bookmarks · gmail <q> · .pdf · content:")
                 .font(.system(size: 9.5, weight: .medium, design: .monospaced))
                 .foregroundStyle(SeekTheme.labelMuted)
                 .lineLimit(1)
@@ -552,12 +559,18 @@ public struct SeekHUDView: View {
             }
             Button("") { if let item = currentFileItem { manager.revealInFinder(item) } }
                 .keyboardShortcut(.return, modifiers: .command)
-            Button("") { if let item = currentFileItem { manager.openInCodeEditor(item) } }
-                .keyboardShortcut("o", modifiers: .command)
+            Button("") {
+                if let item = currentFileItem { manager.openInCodeEditor(item) }
+                else if let site = currentResult?.webSiteItem { manager.openWebSite(site, preferDefaultBrowser: true) }
+            }
+            .keyboardShortcut("o", modifiers: .command)
             Button("") { if let item = currentFileItem { manager.toggleQuickLook(for: item) } }
                 .keyboardShortcut("y", modifiers: .command)
-            Button("") { if let item = currentFileItem { manager.copyFileToClipboard(item) } }
-                .keyboardShortcut("c", modifiers: [.command, .shift])
+            Button("") {
+                if let item = currentFileItem { manager.copyFileToClipboard(item) }
+                else if let site = currentResult?.webSiteItem { manager.copyWebURL(site) }
+            }
+            .keyboardShortcut("c", modifiers: [.command, .shift])
             Button("") { clearSearch() }
                 .keyboardShortcut(.delete, modifiers: .command)
         }
@@ -629,6 +642,10 @@ public struct SeekHUDView: View {
         case .file(let item):
             if isCommand { manager.revealInFinder(item) }
             else { manager.openItem(item) }
+        case .webSite(let site):
+            manager.openWebSite(site, preferDefaultBrowser: isCommand)
+        case .siteSearch(let action):
+            manager.openSiteSearch(action)
         }
     }
 }
@@ -707,6 +724,15 @@ private struct UnifiedResultRow: View {
                     .resizable()
                     .aspectRatio(contentMode: .fit)
                     .frame(width: 24, height: 24)
+            case .webSite(let site):
+                Image(nsImage: BrowserIconCache.shared.icon(for: site.source))
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 22, height: 22)
+            case .siteSearch(let action):
+                Image(systemName: action.iconName)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(SeekTheme.steelSapphire)
             }
         }
         .frame(width: 32, height: 32)
@@ -773,6 +799,49 @@ private struct UnifiedResultRow: View {
                 }
                 .onTapGesture { onReveal() }
             }
+
+        case .webSite(let site):
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 5) {
+                    Text(highlightedAttributedTitle(site.title, ranges: result.matchedRanges, isSelected: isSelected))
+                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        .lineLimit(1)
+
+                    if site.isBookmark {
+                        badgePill("BOOKMARK", color: SeekTheme.warmChampagne)
+                    } else if site.visitCount >= 5 {
+                        badgePill("TOP SITE", color: SeekTheme.steelSapphire)
+                    } else {
+                        badgePill(site.source.shortName.uppercased(), color: SeekTheme.platinumIce)
+                    }
+                }
+
+                HStack(spacing: 4) {
+                    Image(systemName: "globe")
+                        .font(.system(size: 8.5, weight: .medium))
+                        .foregroundStyle(Color(white: 0.48))
+                    Text(site.displaySubtitle)
+                        .font(.system(size: 10, weight: .regular, design: .monospaced))
+                        .foregroundStyle(isSelected ? Color(white: 0.72) : Color(white: 0.52))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            }
+
+        case .siteSearch(let action):
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text("Search \(action.siteName) for \"\(action.query)\"")
+                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        .foregroundStyle(isSelected ? Color.white : Color(white: 0.92))
+                        .lineLimit(1)
+                    badgePill("SEARCH IN", color: SeekTheme.steelSapphire)
+                }
+                Text("\(action.domain) · Opens directly in browser")
+                    .font(.system(size: 10, weight: .regular, design: .monospaced))
+                    .foregroundStyle(Color(white: 0.56))
+                    .lineLimit(1)
+            }
         }
     }
 
@@ -788,6 +857,11 @@ private struct UnifiedResultRow: View {
                 .clipShape(RoundedRectangle(cornerRadius: 6))
         } else if case .file(let item) = result.kind {
             Text(item.relativeTimeString)
+                .font(.system(size: 9.5, weight: .medium, design: .monospaced))
+                .foregroundStyle(Color(white: 0.52))
+                .lineLimit(1)
+        } else if case .webSite(let site) = result.kind {
+            Text(site.visitCount >= 2 ? "\(site.visitCount)×" : site.source.shortName)
                 .font(.system(size: 9.5, weight: .medium, design: .monospaced))
                 .foregroundStyle(Color(white: 0.52))
                 .lineLimit(1)
@@ -832,6 +906,9 @@ private struct FileInspectorPane: View {
     let onCopyFile: (IndexedFileItem) -> Void
     let onRunCommand: (QuickCommandResult) -> Void
     let onFocusWindow: (OpenWindowEntry) -> Void
+    let onOpenWeb: (BrowserSiteItem, Bool) -> Void
+    let onCopyWebURL: (BrowserSiteItem) -> Void
+    let onOpenSiteSearch: (SiteSearchAction) -> Void
 
     private static let dateFormatter: DateFormatter = {
         let df = DateFormatter()
@@ -847,6 +924,8 @@ private struct FileInspectorPane: View {
                 case .file(let item): fileInspector(item)
                 case .inlineCommand(let cmd), .command(let cmd): commandInspector(cmd)
                 case .openWindow(let win): windowInspector(win)
+                case .webSite(let site): webSiteInspector(site)
+                case .siteSearch(let action): siteSearchInspector(action)
                 }
             } else {
                 VStack(spacing: 8) {
@@ -1040,6 +1119,145 @@ private struct FileInspectorPane: View {
             Button(action: { onFocusWindow(win) }) {
                 HStack {
                     Text("Focus Window").font(.system(size: 12, weight: .semibold, design: .rounded))
+                    Spacer()
+                    Text("⏎").font(.system(size: 10.5, weight: .bold, design: .monospaced))
+                }
+                .foregroundStyle(.white)
+                .padding(.horizontal, 12)
+                .frame(height: 32)
+                .background(SeekTheme.steelSapphire.opacity(0.32))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(SeekTheme.steelSapphire.opacity(0.75), lineWidth: 1))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    @ViewBuilder
+    private func webSiteInspector(_ site: BrowserSiteItem) -> some View {
+        VStack(alignment: .leading, spacing: 11) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                    .fill(Color.white.opacity(0.045))
+                    .overlay(RoundedRectangle(cornerRadius: 11, style: .continuous).stroke(Color.white.opacity(0.10), lineWidth: 0.8))
+
+                VStack(spacing: 10) {
+                    Image(nsImage: BrowserIconCache.shared.icon(for: site.source))
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 54, height: 54)
+
+                    Text(site.domain.isEmpty ? site.source.rawValue : site.domain)
+                        .font(.system(size: 11.5, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(SeekTheme.steelSapphire)
+                        .lineLimit(1)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 3.5)
+                        .background(SeekTheme.steelSapphire.opacity(0.14))
+                        .clipShape(Capsule())
+                }
+                .padding(12)
+            }
+            .frame(height: 140)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(site.title)
+                    .font(.system(size: 13.5, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white)
+                    .lineLimit(2)
+
+                Text(site.url.absoluteString)
+                    .font(.system(size: 9.5, weight: .regular, design: .monospaced))
+                    .foregroundStyle(Color(white: 0.58))
+                    .lineLimit(3)
+                    .truncationMode(.middle)
+            }
+
+            Rectangle().fill(SeekTheme.dividerStroke).frame(height: 1)
+
+            VStack(spacing: 5) {
+                metaRow("Browser", site.source.rawValue)
+                if let prof = site.profileDisplayName, !prof.isEmpty {
+                    metaRow("Profile", prof)
+                }
+                metaRow("Type", site.isBookmark ? "Bookmark" : "Top Visited Site")
+                if let folder = site.folderPath, !folder.isEmpty {
+                    metaRow("Folder", folder)
+                }
+                if site.visitCount > 0 {
+                    metaRow("Visits", "\(site.visitCount)")
+                }
+                if site.lastVisited != .distantPast {
+                    metaRow("Last Visited", Self.dateFormatter.string(from: site.lastVisited))
+                }
+            }
+
+            Spacer(minLength: 0)
+
+            VStack(spacing: 6) {
+                Button(action: { onOpenWeb(site, false) }) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "safari.fill")
+                            .font(.system(size: 11, weight: .semibold))
+                        Text(site.openButtonLabel)
+                            .font(.system(size: 11.5, weight: .semibold, design: .rounded))
+                            .lineLimit(1)
+                        Spacer()
+                        Text("⏎")
+                            .font(.system(size: 10, weight: .bold, design: .monospaced))
+                            .opacity(0.85)
+                    }
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 10)
+                    .frame(height: 31)
+                    .background(SeekTheme.steelSapphire.opacity(0.32))
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(SeekTheme.steelSapphire.opacity(0.75), lineWidth: 0.9))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                }
+                .buttonStyle(.plain)
+
+                HStack(spacing: 6) {
+                    inspectorMiniButton("globe", "Default", "⌘O") { onOpenWeb(site, true) }
+                    inspectorMiniButton("link", "Copy URL", "⌘⇧C") { onCopyWebURL(site) }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func siteSearchInspector(_ action: SiteSearchAction) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Spacer()
+            ZStack {
+                RoundedRectangle(cornerRadius: 14)
+                    .fill(SeekTheme.steelSapphire.opacity(0.16))
+                    .frame(width: 60, height: 60)
+                    .overlay(RoundedRectangle(cornerRadius: 14).stroke(SeekTheme.steelSapphire.opacity(0.45), lineWidth: 1))
+                Image(systemName: action.iconName)
+                    .font(.system(size: 26, weight: .semibold))
+                    .foregroundStyle(SeekTheme.steelSapphire)
+            }
+            VStack(alignment: .leading, spacing: 5) {
+                Text("DIRECT SITE SEARCH")
+                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+                    .foregroundStyle(SeekTheme.steelSapphire)
+                Text("Search \(action.siteName)")
+                    .font(.system(size: 16, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white)
+                Text("Query: \"\(action.query)\"")
+                    .font(.system(size: 12, weight: .medium, design: .rounded))
+                    .foregroundStyle(Color(white: 0.78))
+                Text(action.targetURL.absoluteString)
+                    .font(.system(size: 9.5, weight: .regular, design: .monospaced))
+                    .foregroundStyle(Color(white: 0.52))
+                    .lineLimit(3)
+                    .truncationMode(.middle)
+            }
+            Spacer()
+            Button(action: { onOpenSiteSearch(action) }) {
+                HStack {
+                    Text("Search on \(action.siteName)")
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
                     Spacer()
                     Text("⏎").font(.system(size: 10.5, weight: .bold, design: .monospaced))
                 }

@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 680 256" width="680" height="256" role="img" aria-labelledby="title">
+  <title id="title">Seek Horizontal Logo</title>
+  <g id="symbol" transform="translate(23, 23) scale(0.82)">
+    <path fill="#12151C" d="M 48 24 H 160 L 128 56 H 64 A 8 8 0 0 0 56 64 V 128 L 24 160 V 48 A 24 24 0 0 1 48 24 Z"/>
+    <path fill="#12151C" d="M 208 232 H 96 L 128 200 H 192 A 8 8 0 0 0 200 192 V 128 L 232 96 V 208 A 24 24 0 0 1 208 232 Z"/>
+    <path fill="#4B83DB" d="M 128 86 L 170 128 L 128 170 L 86 128 Z"/>
+  </g>
+  <g id="wordmark" fill="#12151C">
+    <path d="M 300 76 H 352 V 94 H 306 A 4 4 0 0 0 302 98 V 115 A 4 4 0 0 0 306 119 H 340 A 16 16 0 0 1 356 135 V 164 A 16 16 0 0 1 340 180 H 288 V 162 H 334 A 4 4 0 0 0 338 158 V 141 A 4 4 0 0 0 334 137 H 300 A 16 16 0 0 1 284 121 V 92 A 16 16 0 0 1 300 76 Z"/>
+    <path d="M 380 76 H 444 V 94 H 400 V 119 H 436 V 137 H 400 V 162 H 444 V 180 H 380 Z"/>
+    <path d="M 468 76 H 532 V 94 H 488 V 119 H 524 V 137 H 488 V 162 H 532 V 180 H 468 Z"/>
+    <path d="M 556 76 H 576 V 120 L 620 76 H 644 L 598 122 L 646 180 H 620 L 584 136 L 576 144 V 180 H 556 Z"/>
+  </g>
+</svg>
