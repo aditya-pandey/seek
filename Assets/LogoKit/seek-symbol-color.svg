@@ -1,8 +1,1 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-labelledby="title">
-  <title id="title">Seek logo — Aperture Lock</title>
-  <g id="symbol">
-    <path fill="#12151C" d="M 48 24 H 160 L 128 56 H 64 A 8 8 0 0 0 56 64 V 128 L 24 160 V 48 A 24 24 0 0 1 48 24 Z"/>
-    <path fill="#12151C" d="M 208 232 H 96 L 128 200 H 192 A 8 8 0 0 0 200 192 V 128 L 232 96 V 208 A 24 24 0 0 1 208 232 Z"/>
-    <path fill="#4B83DB" d="M 128 86 L 170 128 L 128 170 L 86 128 Z"/>
-  </g>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" aria-labelledby="title" role="img" viewBox="0 0 256 256"><title id="title">Seek logo — Aperture Lock</title><g id="symbol"><path fill="#12151C" d="M 48 24 H 160 L 128 56 H 64 A 8 8 0 0 0 56 64 V 128 L 24 160 V 48 A 24 24 0 0 1 48 24 Z"/><path fill="#12151C" d="M 208 232 H 96 L 128 200 H 192 A 8 8 0 0 0 200 192 V 128 L 232 96 V 208 A 24 24 0 0 1 208 232 Z"/><path fill="#4B83DB" d="M 128 86 L 170 128 L 128 170 L 86 128 Z"/></g></svg>

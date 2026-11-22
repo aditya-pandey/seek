@@ -1,8 +1,1 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256"><title>Seek logo</title><rect width="256" height="256" rx="57.6" fill="#0E1117"/><g transform="translate(35.71 35.71) scale(0.721)" fill="#ffffff">
-  <title id="title">Seek logo — Small Size Cut</title>
-  <g id="symbol" fill="#ffffff">
-    <path d="M 42 18 H 162 L 126 54 H 62 A 8 8 0 0 0 54 62 V 126 L 18 162 V 42 A 24 24 0 0 1 42 18 Z"/>
-    <path d="M 214 238 H 94 L 130 202 H 194 A 8 8 0 0 0 202 194 V 130 L 238 94 V 214 A 24 24 0 0 1 214 238 Z"/>
-    <path d="M 128 82 L 174 128 L 128 174 L 82 128 Z"/>
-  </g>
-</g></svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256"><title>Seek logo</title><rect width="256" height="256" fill="#0E1117" rx="57.6"/><g fill="#fff" transform="translate(35.71 35.71) scale(0.721)"><title id="title">Seek logo — Small Size Cut</title><g id="symbol" fill="#fff"><path d="M 42 18 H 162 L 126 54 H 62 A 8 8 0 0 0 54 62 V 126 L 18 162 V 42 A 24 24 0 0 1 42 18 Z"/><path d="M 214 238 H 94 L 130 202 H 194 A 8 8 0 0 0 202 194 V 130 L 238 94 V 214 A 24 24 0 0 1 214 238 Z"/><path d="M 128 82 L 174 128 L 128 174 L 82 128 Z"/></g></g></svg>
